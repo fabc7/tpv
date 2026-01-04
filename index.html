@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TPV Pro - Buscador & CSV</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f1f5f9; }
+        .category-pill.active { background-color: #2563eb; color: white; border-color: #2563eb; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-6 flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-200 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800 tracking-tight">Sistema de Ventas</h1>
+                <div class="flex items-center gap-2">
+                    <span id="dot-status" class="w-2 h-2 rounded-full bg-amber-500"></span>
+                    <p id="status-db" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cargando productos...</p>
+                </div>
+            </div>
+            
+            <div class="relative w-full md:w-96">
+                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </span>
+                <input type="text" id="buscador" oninput="renderVenta()" placeholder="Buscar producto..." 
+                    class="w-full pl-10 pr-4 py-3 bg-slate-100 border-none rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-slate-700 font-medium">
+            </div>
+        </header>
+
+        <section id="section-pedido" class="grid lg:grid-cols-12 gap-6">
+            <div class="lg:col-span-8">
+                <div id="filtro-categorias" class="flex gap-2 overflow-x-auto pb-4 no-scrollbar"></div>
+                
+                <div id="grid-venta" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 mt-2">
+                    </div>
+            </div>
+
+            <div class="lg:col-span-4 bg-white rounded-2xl shadow-xl border border-slate-200 flex flex-col h-[700px] sticky top-6">
+                <div class="p-6 border-b flex justify-between items-center">
+                    <h2 class="text-xl font-bold text-slate-800">Cuenta</h2>
+                    <button onclick="limpiarPedido()" class="text-xs font-bold text-red-400 uppercase hover:text-red-700 transition-colors">Vaciar Todo</button>
+                </div>
+                
+                <div id="carrito-items" class="flex-grow overflow-y-auto p-4 space-y-3">
+                    <div class="text-center py-20 text-slate-300 font-medium">No hay productos seleccionados</div>
+                </div>
+
+                <div class="p-6 bg-slate-50 border-t rounded-b-2xl">
+                    <div class="flex justify-between items-center mb-6">
+                        <span class="text-slate-400 font-bold text-xs uppercase tracking-widest">Total</span>
+                        <span id="total-cart" class="text-4xl font-black text-blue-700">$0</span>
+                    </div>
+                    <button onclick="pagar()" class="w-full py-4 bg-blue-600 text-white rounded-xl font-black text-lg hover:bg-blue-700 transition-all shadow-lg active:scale-95">FINALIZAR VENTA</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        let productos = [];
+        let pedido = [];
+        let categoriaActual = 'Todas';
+
+        const formatCLP = (n) => '$' + Math.round(n).toLocaleString('es-CL');
+
+        // --- CARGA AUTOMÁTICA DEL CSV ---
+        async function cargarCSV() {
+            try {
+                const res = await fetch('productos.csv');
+                if (!res.ok) throw new Error();
+                const data = await res.text();
+                
+                const filas = data.split(/\r?\n/);
+                productos = filas.map((fila, index) => {
+                    const col = fila.split(',');
+                    if (col.length >= 3 && col[0].trim() && col[1].trim()) {
+                        return {
+                            id: index,
+                            categoria: col[0].trim(),
+                            nombre: col[1].trim(),
+                            precio: parseInt(col[2].trim()) || 0
+                        };
+                    }
+                    return null;
+                }).filter(p => p !== null);
+
+                document.getElementById('status-db').innerText = "Catálogo actualizado";
+                document.getElementById('dot-status').className = "w-2 h-2 rounded-full bg-green-500";
+                renderFiltros();
+                renderVenta();
+            } catch (e) {
+                document.getElementById('status-db').innerText = "Error: productos.csv no detectado";
+                document.getElementById('dot-status').className = "w-2 h-2 rounded-full bg-red-500";
+            }
+        }
+
+        // --- RENDERIZADO CON FILTRO Y BUSCADOR ---
+        function renderVenta() {
+            const grid = document.getElementById('grid-venta');
+            const textoBusqueda = document.getElementById('buscador').value.toLowerCase();
+            
+            // Filtro por categoría Y por texto de búsqueda
+            const filtrados = productos.filter(p => {
+                const matchCategoria = (categoriaActual === 'Todas' || p.categoria === categoriaActual);
+                const matchTexto = p.nombre.toLowerCase().includes(textoBusqueda);
+                return matchCategoria && matchTexto;
+            });
+
+            if (filtrados.length === 0) {
+                grid.innerHTML = `<div class="col-span-full py-20 text-center text-slate-400 font-medium">No se encontraron productos...</div>`;
+                return;
+            }
+
+            grid.innerHTML = filtrados.map(p => `
+                <div onclick="agregarAlPedido(${p.id})" class="bg-white p-4 rounded-xl border border-slate-200 cursor-pointer hover:border-blue-500 hover:shadow-md transition-all active:scale-95 group">
+                    <div class="text-[9px] font-black text-blue-500 uppercase mb-1">${p.categoria}</div>
+                    <h3 class="font-bold text-slate-700 text-sm h-10 overflow-hidden mb-1 leading-tight group-hover:text-blue-600">${p.nombre}</h3>
+                    <div class="font-black text-slate-900">${formatCLP(p.precio)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderFiltros() {
+            const cats = ['Todas', ...new Set(productos.map(p => p.categoria))];
+            const container = document.getElementById('filtro-categorias');
+            container.innerHTML = cats.map(c => `
+                <button onclick="setCategoria('${c}')" class="category-pill border px-6 py-2 rounded-full font-bold text-xs whitespace-nowrap transition-all ${categoriaActual === c ? 'active' : 'bg-white text-slate-500 hover:bg-slate-50'}">
+                    ${c}
+                </button>
+            `).join('');
+        }
+
+        function setCategoria(cat) {
+            categoriaActual = cat;
+            renderFiltros();
+            renderVenta();
+        }
+
+        // --- LÓGICA DE CARRITO ---
+        function agregarAlPedido(id) {
+            const p = productos.find(x => x.id === id);
+            const enCarro = pedido.find(x => x.id === id);
+            if(enCarro) enCarro.cantidad++;
+            else pedido.push({...p, cantidad: 1});
+            renderCarrito();
+        }
+
+        function modCant(id, delta) {
+            const item = pedido.find(i => i.id === id);
+            if(item) {
+                item.cantidad += delta;
+                if(item.cantidad <= 0) pedido = pedido.filter(i => i.id !== id);
+            }
+            renderCarrito();
+        }
+
+        function renderCarrito() {
+            const cont = document.getElementById('carrito-items');
+            const totalDisplay = document.getElementById('total-cart');
+            
+            if(pedido.length === 0) {
+                cont.innerHTML = `<div class="text-center py-20 text-slate-300 font-medium">No hay productos seleccionados</div>`;
+                totalDisplay.innerText = "$0";
+                return;
+            }
+
+            let total = 0;
+            cont.innerHTML = pedido.map(i => {
+                const sub = i.precio * i.cantidad;
+                total += sub;
+                return `
+                <div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <div class="flex-grow pr-2">
+                        <p class="font-bold text-xs text-slate-800 leading-tight">${i.nombre}</p>
+                        <p class="text-[10px] text-slate-400 font-bold">${formatCLP(i.precio)} c/u</p>
+                    </div>
+                    <div class="flex flex-col items-end gap-1">
+                        <div class="flex items-center bg-white border rounded-lg shadow-sm">
+                            <button onclick="modCant(${i.id},-1)" class="w-6 h-6 flex items-center justify-center text-red-500 font-bold hover:bg-red-50 border-r">-</button>
+                            <span class="px-2 text-xs font-black text-slate-700">${i.cantidad}</span>
+                            <button onclick="modCant(${i.id},1)" class="w-6 h-6 flex items-center justify-center text-blue-500 font-bold hover:bg-blue-50 border-l">+</button>
+                        </div>
+                        <span class="text-xs font-black text-slate-900">${formatCLP(sub)}</span>
+                    </div>
+                </div>`;
+            }).join('');
+            totalDisplay.innerText = formatCLP(total);
+        }
+
+        function limpiarPedido() {
+            if(pedido.length > 0 && confirm('¿Deseas vaciar la cuenta actual?')) {
+                pedido = [];
+                renderCarrito();
+            }
+        }
+
+        function pagar() {
+            if(pedido.length > 0) {
+                alert("VENTA EXITOSA\nTotal: " + document.getElementById('total-cart').innerText);
+                pedido = [];
+                renderCarrito();
+            }
+        }
+
+        window.onload = cargarCSV;
+    </script>
+</body>
+</html>
